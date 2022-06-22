@@ -1,0 +1,248 @@
+---
+title: "Practical machine learning course project"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r knitr_setup, echo=FALSE}
+
+# Global R markdown code chunk options
+knitr::opts_chunk$set(message=FALSE, 
+                      warning = FALSE, 
+                      error=FALSE, 
+                      echo=TRUE, 
+                      fig.width = 7, fig.height = 6, 
+                      fig.align = 'left')
+```
+
+# 1. Project description
+
+**Background**     
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+**Data**    
+The training data for this project are available here:    
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv    
+
+The test data are available here:    
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv    
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+**What you should submit**     
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+# 2. Summary of the approach
+
+## 2.1 Data split
+
+Data split pml-training.csv dataset consists of 19622 observation. I decided to split this data set dedicating 75% of the records to testing, and 25% to testing or model validation. The pml-testing.csv data set has only been used for applying the validated model.
+
+
+## 2.2 Data cleaning
+
+* Only predictors containing measurements from accelerometers on the belt, forearm, arm, and dumbell have been used for modeling.   
+
+* Predictors containing missing data have been excluded. None of the 52 predictors had near zero variance.
+
+
+## 2.3 Model training and validation
+
+Using the training data set I built three models:  
+1) random forest      
+2) gradient boosting machine     
+3) linear discriminant analysis   
+
+Parallel computing framework, using doParallel package, was used to accelerate the computations. 
+
+**Out of sample error**
+Model accuracy was measured in the 25% of the test data subset. Random forest had the highest accuracy or 99.9%, followed by gradient boosting machine with 97.4%. Linear discriminant analysis achieved only 70.6% accuracy, likely because the data is not normally distributed. 
+
+## 2.4 Model application
+
+Random forest and gradient boosting machine produced identical predictions on the 20 cases in the pml-testing.csv data set. 
+
+
+# 3. Execution
+
+# 3.1 Read the data
+
+```{r}
+
+set.seed(1234)  # Seed has been set for reproducibility
+
+setwd("C:/Users/karol/Desktop/Machine learning")
+
+train_df <- read.csv("pml-training.csv")
+application_df <- read.csv("pml-testing.csv") 
+
+
+dim(train_df)      # 19622   160
+dim(application_df) # 20 160
+
+```
+
+## 3.1 Data cleaning
+
+Use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.
+```{r}
+
+# Keep only variables including classe|belt|forearm|arm|dumbbell in the name
+train_df <- train_df[,grep("classe|belt|forearm|arm|dumbbell", colnames(train_df), value = TRUE)]
+
+dim(train_df) # 19622   153
+
+```
+
+
+Clean the data removing variables containing missing records
+```{r}
+
+# Remove variables with NAs or missing observations
+
+#train_df2 <- train_df[, sapply(train_df, function (x) all(complete.cases(x)))]
+#str(train_df2)
+# The solution above keeps 86 variables, but many of them contain "" entries
+
+# This is a much more conservative approach, keeping 53 variables
+train_df <- train_df[, !sapply(train_df, function (x) any(is.na(x) | x == ""))]
+
+dim(train_df) # 19622 53
+
+# Inspect the data
+str(train_df)
+
+```
+
+Check for variables with near zero variance
+```{r}
+
+library(caret)
+
+nearZeroVar(train_df)
+
+```
+
+
+```{r}
+
+# Select the same set of variables in the application_df dataset.
+
+application_df <- application_df[, colnames(application_df) %in% colnames(train_df)]
+
+dim(application_df) # 20 52
+
+```
+
+
+
+## 3.2 Training machine learning models
+
+```{r, eval=FALSE}
+
+train_df$classe <- as.factor(train_df$classe)
+
+library(randomForest)
+
+inTrain = createDataPartition(train_df$classe, p = 0.75)[[1]]
+training = train_df[inTrain,]
+testing = train_df[-inTrain,]
+
+
+#dim(training) # 14718   53
+#dim(testing)  # 4904  53
+
+
+library(doParallel)
+cl<-makePSOCKcluster(10)
+registerDoParallel(cl)
+
+## Fit (1) a random forest predictor relating the factor variable y to the remaining variables
+mod_rf <- train(classe ~ ., data = training, method = "rf")
+
+#      (2) a boosted predictor using the "gbm" method. Gradient Boosting Machine
+mod_gbm <- train(classe ~ ., data = training, method = "gbm")
+
+# Note: LDA assumes that independent variables are normally distributed
+mod_lda <- train(classe ~ ., data = training, method = "lda")
+
+stopCluster(cl)
+
+### https://stackoverflow.com/questions/64519640/error-in-summary-connectionconnection-invalid-connection
+unregister_dopar <- function() {
+  env <- foreach:::.foreachGlobals
+  rm(list=ls(name=env), pos=env)
+}
+
+unregister_dopar()
+###
+
+save.image("C:/Users/karol/Desktop/Machine learning/Trained_models_6_21_2022.RData")
+
+```
+
+
+## 3.3 Predict from the testing data
+```{r}
+
+load("C:/Users/karol/Desktop/Machine learning/Trained_models_6_21_2022.RData")
+
+# Predict
+pred_rf <- predict(mod_rf, testing)
+pred_gbm <- predict(mod_gbm, testing)
+pred_lda <- predict(mod_lda, testing)
+
+```
+
+
+## 3.4 Assess models performance
+```{r}
+
+# Accuracy using random forests 0.9991843
+confusionMatrix(pred_rf, testing$classe)$overall[1]
+
+# Accuracy using boosting 0.9738989
+confusionMatrix(pred_gbm, testing$classe)$overall[1]
+
+# Accuracy using linear discriminant analysis 0.7057504  
+confusionMatrix(pred_lda, testing$classe)$overall[1]
+
+```
+
+
+## 3.5 Apply the model to a new dataset
+
+```{r}
+
+pred_rf_applied <- predict(mod_rf, application_df)
+pred_gbm_applied <- predict(mod_gbm, application_df)
+pred_lda_applied <- predict(mod_lda, application_df)
+
+
+application_df$classe_rf_pred <- pred_rf_applied
+application_df$classe_gbm_pred <- pred_gbm_applied
+application_df$classe_lda_pred <- pred_lda_applied
+
+
+
+
+application_df$classe_rf_pred == application_df$classe_gbm_pred  # Identical
+
+sum(application_df$classe_rf_pred == application_df$classe_lda_pred) / length(application_df$classe_lda_pred)
+
+
+confusionMatrix(application_df$classe_rf_pred, 
+                application_df$classe_gbm_pred)
+
+
+confusionMatrix(application_df$classe_rf_pred, 
+                application_df$classe_lda_pred)
+
+
+```
+
